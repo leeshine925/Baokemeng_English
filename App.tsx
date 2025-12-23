@@ -19,10 +19,10 @@ const App: React.FC = () => {
     storageService.saveUserState(userState);
   }, [userState]);
 
-  // 核心逻辑：获取指定年级和关卡的专属单词包（每包5个，绝不重复）
   const getWordsForLevel = (grade: Grade, level: number): Word[] => {
+    // 核心逻辑：根据年级和关卡物理切分词池，确保绝不重复
     const gradeWords = VOCABULARY.filter(w => w.grade === grade);
-    const startIdx = (level - 1) * 5;
+    const startIdx = (level - 1) * 5; // 每关5个词
     return gradeWords.slice(startIdx, startIdx + 5);
   };
 
@@ -39,21 +39,23 @@ const App: React.FC = () => {
 
   const handleQuizFinish = (correctIds: string[], wrongWords: Word[]) => {
     const isLevelClear = wrongWords.length === 0 && correctIds.length === activeQuizWords.length;
-    
-    const newWrongAnswers = [...userState.wrongAnswers];
-    wrongWords.forEach(ww => {
-      if (!newWrongAnswers.find(prev => prev.id === ww.id)) {
-        newWrongAnswers.push(ww);
-      }
-    });
-
     const pointsEarned = correctIds.length * 10;
     
+    if (correctIds.length > 0) {
+      // @ts-ignore - 触发全屏烟花
+      confetti({
+        particleCount: 150,
+        spread: 70,
+        origin: { y: 0.6 },
+        colors: [APP_THEME.primary, APP_THEME.accent, APP_THEME.secondary]
+      });
+    }
+
     if (isLevelClear) {
       const currentLevel = userState.gradeProgress[userState.currentGrade] || 0;
-      // 更新进度：只有完成当前最高关卡才增加进度
-      const levelPlayed = Math.floor(VOCABULARY.filter(w => w.grade === userState.currentGrade).indexOf(activeQuizWords[0]) / 5) + 1;
-      const nextLevelProgress = levelPlayed > currentLevel ? levelPlayed : currentLevel;
+      // 这里的逻辑确保只有完成当前最高关卡才推进进度
+      const levelIndex = Math.floor(VOCABULARY.filter(w => w.grade === userState.currentGrade).indexOf(activeQuizWords[0]) / 5) + 1;
+      const nextLevelProgress = levelIndex > currentLevel ? levelIndex : currentLevel;
       
       const randomIdx = Math.floor(Math.random() * POKEMON_DATA.length);
       const wonPokemon = POKEMON_DATA[randomIdx];
@@ -61,278 +63,55 @@ const App: React.FC = () => {
 
       setUserState(prev => ({
         ...prev,
-        points: prev.points + pointsEarned + 50,
+        points: prev.points + pointsEarned + 50, // 通关额外奖励
         gradeProgress: { ...prev.gradeProgress, [prev.currentGrade]: nextLevelProgress },
         collection: [...prev.collection, wonPokemon],
         completedWords: Array.from(new Set([...prev.completedWords, ...correctIds])),
-        wrongAnswers: newWrongAnswers.filter(w => !correctIds.includes(w.id)) // 如果在错题集里做对了，也移除
+        wrongAnswers: prev.wrongAnswers.filter(w => !correctIds.includes(w.id)) 
       }));
-
       setView('draw-result');
     } else {
-      setUserState(prev => ({
-        ...prev,
-        points: prev.points + pointsEarned,
-        completedWords: Array.from(new Set([...prev.completedWords, ...correctIds])),
-        wrongAnswers: newWrongAnswers
-      }));
-      alert(wrongWords.length > 0 ? `闯关结束！有 ${wrongWords.length} 个单词答错啦。全对通关才能获得精灵球哦！` : '请完成所有题目！');
+      setUserState(prev => {
+        const uniqueWrong = [...prev.wrongAnswers];
+        wrongWords.forEach(ww => {
+          if (!uniqueWrong.find(pa => pa.id === ww.id)) uniqueWrong.push(ww);
+        });
+        return {
+          ...prev,
+          points: prev.points + pointsEarned,
+          completedWords: Array.from(new Set([...prev.completedWords, ...correctIds])),
+          wrongAnswers: uniqueWrong
+        };
+      });
+      alert(`闯关结束！获得了 ${pointsEarned} 积分。全对通关才能开启精灵球宝箱哦！`);
       setView('home');
     }
   };
 
-  const buyPokemon = (pokemon: Pokemon) => {
-    if (userState.points >= pokemon.price) {
-      setUserState(prev => ({
-        ...prev,
-        points: prev.points - pokemon.price,
-        collection: [...prev.collection, pokemon]
-      }));
-      alert(`恭喜获得 ${pokemon.name}!`);
-    } else {
-      alert('积分不足，快去闯关吧！');
-    }
+  const openEgg = () => {
+    if (userState.points < 50) return; // 逻辑锁，配合按钮 disabled
+    
+    const won = POKEMON_DATA[Math.floor(Math.random() * POKEMON_DATA.length)];
+    setLastWonPokemon(won);
+    setUserState(prev => ({
+      ...prev,
+      points: prev.points - 50,
+      collection: [...prev.collection, won]
+    }));
+    setView('draw-result');
   };
 
   const sellPokemon = (index: number) => {
     const pokemon = userState.collection[index];
-    const sellPrice = Math.floor(pokemon.price * 0.8);
-    const newCollection = [...userState.collection];
-    newCollection.splice(index, 1);
-    
+    const sellPrice = Math.floor(pokemon.price * 0.7);
+    const newColl = [...userState.collection];
+    newColl.splice(index, 1);
     setUserState(prev => ({
       ...prev,
       points: prev.points + sellPrice,
-      collection: newCollection
+      collection: newColl
     }));
-    alert(`以 ${sellPrice} 积分卖出了 ${pokemon.name}`);
-  };
-
-  const renderContent = () => {
-    switch (currentView) {
-      case 'home':
-        return (
-          <div className="p-6">
-            <h2 className="text-2xl font-bold mb-2 text-gray-800">冒险大地图</h2>
-            <p className="text-sm text-gray-500 mb-6">每个关卡包含 5 个专属单词，全对可抽取精灵！</p>
-            
-            <div className="flex flex-col gap-10 relative">
-              <div className="absolute left-1/2 top-0 bottom-0 w-1 bg-gray-100 -translate-x-1/2 -z-10"></div>
-              
-              {Object.values(Grade).map((grade) => {
-                const progress = userState.gradeProgress[grade] || 0;
-                const isGradeActive = userState.currentGrade === grade;
-
-                return (
-                  <div key={grade} className="flex flex-col items-center">
-                    <div className={`px-4 py-1 rounded-full text-xs font-bold mb-4 ${isGradeActive ? 'bg-green-500 text-white shadow-lg' : 'bg-gray-200 text-gray-500'}`}>
-                      {grade}
-                    </div>
-                    
-                    <div className="flex flex-wrap justify-center gap-4 max-w-[280px]">
-                      {[1, 2, 3, 4, 5].map((lvl) => {
-                        const isUnlocked = lvl <= progress + 1;
-                        const isCompleted = lvl <= progress;
-                        
-                        return (
-                          <button
-                            key={lvl}
-                            disabled={!isUnlocked}
-                            onClick={() => startLevel(grade, lvl)}
-                            className={`w-14 h-14 rounded-full flex items-center justify-center font-bold text-lg shadow-md transition-all duo-button
-                              ${isCompleted ? 'bg-yellow-400 text-white' : isUnlocked ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-400 opacity-50 cursor-not-allowed'}
-                            `}
-                          >
-                            {isCompleted ? '⭐' : lvl}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-
-      case 'draw-result':
-        return (
-          <div className="flex flex-col items-center justify-center p-6 h-full text-center min-h-[70vh]">
-            <h2 className="text-3xl font-bold text-green-600 mb-4 animate-bounce">完美通关！</h2>
-            <p className="text-gray-500 mb-8 font-medium">触发了隐藏的精灵球...</p>
-            <div className="relative w-64 h-64 mb-10">
-              <div className="absolute inset-0 bg-yellow-400 rounded-full animate-ping opacity-10"></div>
-              <div className="relative z-10 p-6 bg-white rounded-[40px] border-4 border-yellow-400 shadow-2xl overflow-hidden">
-                <div className="absolute top-0 left-0 w-full h-1/2 bg-red-500 opacity-5"></div>
-                <img 
-                  src={lastWonPokemon?.image} 
-                  alt="Pokemon" 
-                  className="w-full h-full object-contain animate-fade-in"
-                />
-              </div>
-            </div>
-            <div className="text-2xl font-black text-gray-800 mb-2">获得新伙伴: {lastWonPokemon?.name}!</div>
-            <div className={`inline-block px-3 py-1 rounded-full text-xs font-bold text-white mb-8 ${lastWonPokemon?.rarity === 'Legendary' ? 'bg-purple-500' : 'bg-blue-400'}`}>
-              {lastWonPokemon?.rarity} 稀有度
-            </div>
-            <button 
-              onClick={() => setView('home')}
-              className="w-full max-w-xs py-4 bg-green-500 text-white rounded-2xl font-bold text-xl shadow-lg duo-button"
-            >
-              继续冒险
-            </button>
-          </div>
-        );
-
-      case 'quiz':
-        return <Quiz grade={userState.currentGrade} initialWords={activeQuizWords} onFinish={handleQuizFinish} />;
-
-      case 'store':
-        return (
-          <div className="p-6">
-            <h2 className="text-2xl font-bold mb-6">积分商城</h2>
-            <div className="grid grid-cols-2 gap-4">
-              {POKEMON_DATA.map(p => (
-                <div key={p.id} className="p-4 border-2 border-gray-100 rounded-3xl text-center bg-white shadow-sm duo-button">
-                  <img src={p.image} alt={p.name} className="w-24 h-24 mx-auto mb-2" />
-                  <div className="font-bold text-gray-700">{p.name}</div>
-                  <div className="text-yellow-600 font-bold mb-3">💰 {p.price}</div>
-                  <button 
-                    onClick={() => buyPokemon(p)}
-                    className="w-full py-2 text-sm bg-blue-500 text-white rounded-xl font-bold shadow-sm"
-                  >
-                    购买
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-
-      case 'market':
-        return (
-          <div className="p-6">
-             <h2 className="text-2xl font-bold mb-6">宝可梦集市</h2>
-             <p className="text-gray-500 mb-6 text-sm">变现重复的精灵，换取更多积分！</p>
-             {userState.collection.length === 0 ? (
-               <div className="text-center py-20 text-gray-400">
-                 <div className="text-5xl mb-4">🏚️</div>
-                 背包里空空如也
-               </div>
-             ) : (
-               <div className="grid grid-cols-2 gap-4">
-                 {userState.collection.map((p, idx) => (
-                   <div key={idx} className="p-4 border-2 border-gray-100 rounded-3xl text-center bg-white shadow-sm">
-                     <img src={p.image} alt={p.name} className="w-20 h-20 mx-auto mb-2" />
-                     <div className="font-bold text-gray-800 text-sm mb-1">{p.name}</div>
-                     <div className="text-green-600 font-bold text-xs mb-3">回收: {Math.floor(p.price * 0.8)} 积分</div>
-                     <button 
-                       onClick={() => sellPokemon(idx)}
-                       className="w-full py-1.5 text-xs bg-red-400 text-white rounded-lg font-bold shadow-sm"
-                     >
-                       确认卖出
-                     </button>
-                   </div>
-                 ))}
-               </div>
-             )}
-          </div>
-        );
-
-      case 'collection':
-        return (
-          <div className="p-6">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold text-gray-800">我的背包</h2>
-              <span className="bg-gray-100 px-3 py-1 rounded-full text-xs font-bold text-gray-500">成员: {userState.collection.length}</span>
-            </div>
-            {userState.collection.length === 0 ? (
-              <div className="text-center py-24">
-                <div className="text-5xl mb-4 opacity-30">🎒</div>
-                <p className="text-gray-400 font-bold">还没有收集到精灵哦</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-4">
-                {userState.collection.map((p, idx) => (
-                  <div key={idx} className="p-4 bg-white border-2 border-gray-100 rounded-3xl text-center shadow-sm relative overflow-hidden group">
-                     <div className="absolute top-0 right-0 p-1.5">
-                        <span className={`text-[8px] px-2 py-0.5 rounded-full text-white font-bold uppercase ${p.rarity === 'Legendary' ? 'bg-purple-500' : p.rarity === 'Epic' ? 'bg-orange-400' : p.rarity === 'Rare' ? 'bg-blue-400' : 'bg-gray-400'}`}>
-                          {p.rarity}
-                        </span>
-                     </div>
-                     <div className="w-24 h-24 mx-auto mb-2 bg-gray-50 rounded-2xl flex items-center justify-center">
-                        <img src={p.image} alt={p.name} className="w-20 h-20 object-contain group-hover:scale-110 transition-transform duration-300" />
-                     </div>
-                     <div className="font-bold text-gray-800">{p.name}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-
-      case 'error-correction':
-        if (userState.wrongAnswers.length === 0) {
-          return (
-            <div className="flex flex-col items-center justify-center p-20 text-center">
-              <div className="w-24 h-24 bg-green-50 rounded-full flex items-center justify-center text-5xl mb-6">🌈</div>
-              <h3 className="text-xl font-bold text-gray-800 mb-2">暂无错题</h3>
-              <p className="text-gray-500">所有的单词都已经掌握，你是最棒的！</p>
-            </div>
-          );
-        }
-        return (
-          <Quiz 
-            grade={userState.currentGrade} 
-            isCorrectionMode 
-            initialWords={userState.wrongAnswers}
-            onFinish={(correctIds) => {
-               setUserState(prev => ({
-                 ...prev,
-                 wrongAnswers: prev.wrongAnswers.filter(w => !correctIds.includes(w.id))
-               }));
-               setView('home');
-               alert('纠错完成！错题集已更新。');
-            }} 
-          />
-        );
-
-      case 'summary':
-        return (
-          <div className="p-6">
-            <h2 className="text-2xl font-bold mb-6">学习周报</h2>
-            <div className="p-6 bg-blue-50 border-2 border-blue-100 rounded-[32px] shadow-sm mb-8">
-              {isLoading ? (
-                <div className="flex flex-col items-center gap-4 py-12">
-                  <div className="w-12 h-12 border-4 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
-                  <p className="text-blue-500 font-bold">AI 老师正在分析数据...</p>
-                </div>
-              ) : (
-                <div className="whitespace-pre-wrap text-blue-900 leading-relaxed font-medium">
-                  {summary || "点击下方按钮生成您的专属报告"}
-                </div>
-              )}
-            </div>
-            <div className="flex gap-4">
-              <button 
-                onClick={loadSummary}
-                className="flex-1 py-4 bg-white border-2 border-blue-200 text-blue-500 rounded-2xl font-bold hover:bg-blue-50 transition-colors"
-              >
-                🔄 刷新报告
-              </button>
-              <button 
-                onClick={() => setView('home')}
-                className="flex-1 py-4 bg-blue-500 text-white rounded-2xl font-bold duo-button"
-              >
-                返回大厅
-              </button>
-            </div>
-          </div>
-        );
-
-      default:
-        return null;
-    }
+    alert(`成功卖出 ${pokemon.name}，回收了 ${sellPrice} 积分！`);
   };
 
   const loadSummary = async () => {
@@ -342,15 +121,275 @@ const App: React.FC = () => {
     setIsLoading(false);
   };
 
-  useEffect(() => {
-    if (currentView === 'summary' && !summary) {
-      loadSummary();
-    }
-  }, [currentView]);
-
   return (
     <Layout userState={userState} currentView={currentView} setView={setView}>
-      {renderContent()}
+      {currentView === 'home' && (
+        <div className="p-6">
+          <div className="bg-white rounded-3xl p-6 shadow-sm border-2 border-gray-100 mb-8 flex items-center justify-between">
+            <div>
+              <div className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-1">我的钱包</div>
+              <div className="text-3xl font-black text-gray-800 flex items-center gap-2">
+                <span className="text-yellow-400">💰</span> {userState.points}
+              </div>
+            </div>
+            <button 
+              onClick={openEgg} 
+              disabled={userState.points < 50}
+              className={`flex flex-col items-center justify-center w-20 h-20 rounded-2xl transition-all duo-button
+                ${userState.points >= 50 ? 'bg-yellow-400 text-white shadow-lg' : 'bg-gray-100 text-gray-300 opacity-50 cursor-not-allowed'}
+              `}
+            >
+              <span className="text-3xl mb-1">🥚</span>
+              <span className="text-[10px] font-black uppercase">50 积分</span>
+            </button>
+          </div>
+
+          <div className="space-y-12 pb-10">
+            {Object.values(Grade).map(grade => {
+              const progress = userState.gradeProgress[grade] || 0;
+              return (
+                <div key={grade} className="relative">
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="h-0.5 flex-1 bg-gray-100"></div>
+                    <h3 className="text-sm font-black text-gray-400 uppercase tracking-widest px-2">{grade}</h3>
+                    <div className="h-0.5 flex-1 bg-gray-100"></div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-6 px-2">
+                    {[1, 2, 3, 4, 5, 6].map(lvl => {
+                      const isUnlocked = lvl <= progress + 1;
+                      const isCompleted = lvl <= progress;
+                      return (
+                        <div key={lvl} className="flex flex-col items-center">
+                          <button
+                            disabled={!isUnlocked}
+                            onClick={() => startLevel(grade, lvl)}
+                            className={`w-20 h-20 rounded-full font-black text-2xl flex items-center justify-center transition-all duo-button relative
+                              ${isCompleted ? 'bg-yellow-400 text-white' : isUnlocked ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-300 opacity-60'}
+                            `}
+                          >
+                            {isCompleted ? '⭐' : lvl}
+                            {isUnlocked && !isCompleted && <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-white animate-ping"></div>}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {currentView === 'quiz' && (
+        <Quiz 
+          grade={userState.currentGrade} 
+          initialWords={activeQuizWords} 
+          onFinish={handleQuizFinish} 
+        />
+      )}
+
+      {currentView === 'draw-result' && lastWonPokemon && (
+        <div className="flex flex-col items-center justify-center p-10 text-center min-h-[70vh] bg-white">
+          <h2 className="text-4xl font-black text-green-500 mb-2 animate-bounce">太棒了！</h2>
+          <p className="text-gray-400 font-bold mb-10">你发现了一位新的伙伴</p>
+          
+          <div className="relative mb-12">
+            <div className="absolute inset-0 bg-yellow-400 rounded-full blur-3xl opacity-20 animate-pulse"></div>
+            <div className="bg-white p-10 rounded-[50px] shadow-2xl border-4 border-yellow-400 relative z-10 scale-110">
+              <img src={lastWonPokemon.image} className="w-48 h-48 object-contain" alt={lastWonPokemon.name} />
+              <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 bg-gray-800 text-white px-6 py-1 rounded-full text-sm font-black">
+                No. {lastWonPokemon.id}
+              </div>
+            </div>
+          </div>
+
+          <div className="mb-10">
+            <h3 className="text-3xl font-black text-gray-800 mb-1">{lastWonPokemon.name}</h3>
+            <span className={`inline-block px-4 py-1 rounded-full text-xs font-black uppercase text-white shadow-sm
+              ${lastWonPokemon.rarity === 'Legendary' ? 'bg-purple-500' : lastWonPokemon.rarity === 'Epic' ? 'bg-orange-500' : lastWonPokemon.rarity === 'Rare' ? 'bg-blue-500' : 'bg-green-500'}
+            `}>
+              {lastWonPokemon.rarity} 稀有度
+            </span>
+          </div>
+
+          <button 
+            onClick={() => setView('home')} 
+            className="w-full max-w-xs py-5 bg-green-500 text-white rounded-[24px] font-black text-xl shadow-lg duo-button"
+          >
+            继续冒险
+          </button>
+        </div>
+      )}
+
+      {currentView === 'store' && (
+        <div className="p-6">
+          <div className="flex justify-between items-end mb-8">
+            <h2 className="text-3xl font-black text-gray-800">精灵商店</h2>
+            <div className="bg-yellow-50 px-4 py-1 rounded-full text-yellow-600 font-black text-sm border border-yellow-100">
+              💰 {userState.points}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-5">
+             {POKEMON_DATA.map(p => (
+               <div key={p.id} className="bg-white border-2 border-gray-100 p-5 rounded-[32px] flex flex-col items-center text-center shadow-sm hover:border-blue-200 transition-colors group">
+                 <div className="w-24 h-24 bg-gray-50 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                   <img src={p.image} className="w-20 h-20 object-contain" alt={p.name} />
+                 </div>
+                 <div className="font-black text-gray-800 mb-1">{p.name}</div>
+                 <div className="text-yellow-600 font-black mb-4 flex items-center gap-1">
+                   <span className="text-sm">💰</span> {p.price}
+                 </div>
+                 <button 
+                   onClick={() => {
+                     if (userState.points >= p.price) {
+                       setUserState(prev => ({...prev, points: prev.points - p.price, collection: [...prev.collection, p]}));
+                       alert(`购买成功！${p.name}加入你的队伍。`);
+                     } else {
+                       alert('积分不足，快去闯关攒积分吧！');
+                     }
+                   }}
+                   className="w-full bg-blue-500 text-white py-3 rounded-2xl font-black text-sm duo-button"
+                 >购买</button>
+               </div>
+             ))}
+          </div>
+        </div>
+      )}
+
+      {currentView === 'market' && (
+        <div className="p-6">
+          <h2 className="text-3xl font-black text-gray-800 mb-2">精灵集市</h2>
+          <p className="text-gray-400 font-bold mb-8 text-sm">卖出重复的精灵，换取积分开启更多挑战！</p>
+          
+          {userState.collection.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-24 text-center">
+              <div className="text-6xl mb-6">🏚️</div>
+              <p className="text-gray-400 font-black">集市摊位空空如也...</p>
+              <button onClick={() => setView('home')} className="mt-6 text-green-500 font-black hover:underline">去抓几只宝可梦再来？</button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-5">
+              {userState.collection.map((p, i) => (
+                <div key={i} className="bg-white border-2 border-gray-100 p-5 rounded-[32px] flex flex-col items-center text-center relative overflow-hidden group">
+                  <div className="absolute top-0 right-0 px-3 py-1 bg-green-50 text-green-600 text-[10px] font-black rounded-bl-2xl">
+                    70% 回收
+                  </div>
+                  <img src={p.image} className="w-20 h-20 mb-3 group-hover:rotate-12 transition-transform" alt={p.name} />
+                  <div className="font-black text-gray-800 mb-1">{p.name}</div>
+                  <div className="text-green-600 text-sm font-black mb-4 flex items-center gap-1">
+                    <span>💰</span> {Math.floor(p.price * 0.7)}
+                  </div>
+                  <button onClick={() => sellPokemon(i)} className="w-full bg-red-400 text-white py-2.5 rounded-2xl text-xs font-black shadow-sm duo-button">确认卖出</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {currentView === 'collection' && (
+        <div className="p-6">
+          <div className="flex justify-between items-center mb-8">
+            <h2 className="text-3xl font-black text-gray-800">我的背包</h2>
+            <div className="bg-gray-100 px-4 py-1 rounded-full text-gray-500 text-xs font-black uppercase">
+              数量: {userState.collection.length}
+            </div>
+          </div>
+          
+          {userState.collection.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-24 text-center">
+              <div className="text-6xl mb-6 grayscale opacity-30">🎒</div>
+              <p className="text-gray-400 font-black">还没有收集到精灵哦</p>
+              <button onClick={() => setView('home')} className="mt-6 bg-green-500 text-white px-8 py-4 rounded-2xl font-black shadow-lg duo-button">立即出发冒险</button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 gap-4">
+               {userState.collection.map((p, i) => (
+                 <div key={i} className="bg-gray-50 rounded-[30px] p-3 border-2 border-transparent hover:border-yellow-400 transition-all flex flex-col items-center group shadow-sm">
+                   <div className="w-full aspect-square bg-white rounded-2xl flex items-center justify-center mb-2">
+                     <img src={p.image} className="w-14 h-14 object-contain group-hover:scale-125 transition-transform" alt={p.name} />
+                   </div>
+                   <span className="text-[11px] font-black text-gray-700 truncate w-full text-center">{p.name}</span>
+                 </div>
+               ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {currentView === 'error-correction' && (
+        <div className="p-6">
+          <h2 className="text-3xl font-black text-gray-800 mb-2">错题宝典</h2>
+          <p className="text-gray-400 font-bold mb-8 text-sm">温故而知新，攻克这些难关吧！</p>
+          
+          {userState.wrongAnswers.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-24 text-center">
+              <div className="text-6xl mb-6">🏆</div>
+              <p className="text-gray-400 font-black">你是英语小天才！暂时没有错题。</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+               {userState.wrongAnswers.map(w => (
+                 <div key={w.id} className="bg-white border-2 border-gray-100 p-6 rounded-[32px] flex justify-between items-center shadow-sm hover:border-blue-300 transition-all group">
+                   <div>
+                     <div className="text-2xl font-black text-blue-500 mb-1 group-hover:tracking-wider transition-all">{w.english}</div>
+                     <div className="text-gray-400 font-bold">{w.chinese}</div>
+                   </div>
+                   <button 
+                     onClick={() => {
+                        const ut = new SpeechSynthesisUtterance(w.english);
+                        ut.lang = 'en-US';
+                        ut.rate = 0.8;
+                        window.speechSynthesis.speak(ut);
+                     }}
+                     className="bg-blue-50 text-blue-500 w-14 h-14 rounded-2xl flex items-center justify-center font-bold shadow-sm hover:bg-blue-100 active:scale-90 transition-all"
+                   >
+                     <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z"></path><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+                   </button>
+                 </div>
+               ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {currentView === 'summary' && (
+        <div className="p-6">
+          <h2 className="text-3xl font-black text-gray-800 mb-2">学习报告</h2>
+          <p className="text-gray-400 font-bold mb-8 text-sm">AI 老师为你深度分析最近的学习表现。</p>
+          
+          <div className="bg-blue-50 p-8 rounded-[40px] border-4 border-blue-100 mb-8 relative">
+            <div className="absolute -top-4 -left-2 bg-blue-500 text-white px-4 py-1 rounded-full text-xs font-black uppercase shadow-md">AI Insights</div>
+            {isLoading ? (
+              <div className="flex flex-col items-center gap-4 py-12">
+                <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                <p className="text-blue-500 font-black animate-pulse">正在批改作业中...</p>
+              </div>
+            ) : (
+              <p className="whitespace-pre-wrap leading-relaxed text-blue-900 font-bold italic">
+                {summary || "点击下方按钮，唤起 AI 老师为你总结。"}
+              </p>
+            )}
+          </div>
+          
+          <div className="flex flex-col gap-4">
+            <button 
+              onClick={loadSummary} 
+              disabled={isLoading}
+              className="w-full py-5 bg-blue-500 text-white rounded-[24px] font-black text-xl shadow-lg duo-button disabled:opacity-50"
+            >
+              ✨ 智能生成总结
+            </button>
+            <button 
+              onClick={() => setView('home')} 
+              className="w-full py-5 bg-white border-2 border-gray-100 text-gray-400 rounded-[24px] font-black text-lg"
+            >
+              返回大本营
+            </button>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 };

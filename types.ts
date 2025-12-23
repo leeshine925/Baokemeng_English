@@ -26,7 +26,7 @@ export interface Pokemon {
 export interface UserState {
   points: number;
   currentGrade: Grade;
-  // 记录每个年级当前完成到第几关 (0-5)
+  // 记录每个年级当前完成到第几关 (0-6)
   gradeProgress: Record<string, number>;
   collection: Pokemon[];
   wrongAnswers: Word[];

@@ -2,7 +2,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { UserState } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const geminiService = {
   async getLearningSummary(state: UserState): Promise<string> {
